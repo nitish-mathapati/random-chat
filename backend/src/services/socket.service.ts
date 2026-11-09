@@ -68,6 +68,10 @@ interface ClientToServerEvents {
     matchId: string;
     candidate: IceCandidatePayload;
   }) => void;
+
+  webrtc_hangup: (payload: {
+    matchId: string;
+  }) => void;
 }
 
 interface ServerToClientEvents {
@@ -108,6 +112,11 @@ interface ServerToClientEvents {
     matchId: string;
     fromGuestId: string;
     candidate: IceCandidatePayload;
+  }) => void;
+
+  webrtc_hangup: (payload: {
+    matchId: string;
+    fromGuestId: string;
   }) => void;
 
   webrtc_signal_error: (payload: WebRtcSignalError) => void;
@@ -649,13 +658,69 @@ export const initializeSocketServer = (
     });
 
     // --------------------------------------------------
+    // WEBRTC: HANG UP
+    // --------------------------------------------------
+
+    socket.on('webrtc_hangup', async (payload) => {
+      try {
+        if (!payload || !isValidMatchId(payload.matchId)) {
+          socket.emit('webrtc_signal_error', {
+            message: 'Invalid hang-up request.',
+          });
+          return;
+        }
+
+        const partnerGuestId = await getActiveMatchPartner(
+          payload.matchId,
+          guestId
+        );
+
+        if (!partnerGuestId) {
+          return;
+        }
+
+        io!.to(`guest:${partnerGuestId}`).emit('webrtc_hangup', {
+          matchId: payload.matchId,
+          fromGuestId: guestId,
+        });
+
+        console.log(
+          `[WebRTC] Hang-up relayed for match ${payload.matchId}`
+        );
+      } catch (error) {
+        console.error('[WebRTC] Hang-up relay failed:', error);
+      }
+    });
+
+    // --------------------------------------------------
     // DISCONNECT
     // --------------------------------------------------
 
-    socket.on('disconnect', (reason) => {
+    socket.on('disconnect', async (reason) => {
       console.log(
         `[Socket] Guest disconnected: ${guestId}. Reason: ${reason}`
       );
+
+      try {
+        // The guest may still be connected from another socket.
+        const remaining = await io!.in(`guest:${guestId}`).fetchSockets();
+
+        if (remaining.length > 0) {
+          return;
+        }
+
+        // Offline guests must not stay in the queue and get matched.
+        await pool.query(
+          `UPDATE matchmaking_queue
+           SET status = 'cancelled',
+               cancelled_at = NOW()
+           WHERE guest_id = $1
+             AND status = 'waiting'`,
+          [guestId]
+        );
+      } catch (error) {
+        console.error('[Socket] Disconnect cleanup failed:', error);
+      }
     });
   });
 

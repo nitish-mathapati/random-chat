@@ -59,7 +59,12 @@ class _MatchingScreenState extends State<MatchingScreen> {
         });
       }
 
-      final response = await MatchmakingApi.joinQueue(token);
+      final response = await MatchmakingApi.joinQueue(
+        token,
+        chatMode: widget.chatMode.toLowerCase().contains('video')
+            ? 'video'
+            : 'text',
+      );
 
       if (!mounted || _isOpeningChat) return;
 

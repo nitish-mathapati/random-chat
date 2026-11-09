@@ -16,8 +16,9 @@ class MatchmakingApi {
   static const String _baseUrl = 'http://192.168.1.11:3000';
 
   static Future<Map<String, dynamic>> joinQueue(
-    String sessionToken,
-  ) async {
+    String sessionToken, {
+    required String chatMode,
+  }) async {
     final uri = Uri.parse('$_baseUrl/api/matchmaking/join');
 
     final response = await http.post(
@@ -26,7 +27,7 @@ class MatchmakingApi {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $sessionToken',
       },
-      body: jsonEncode({}),
+      body: jsonEncode({'chatMode': chatMode}),
     );
 
     return _handleResponse(response);

@@ -358,6 +358,31 @@ class SocketService {
   }
 
   // --------------------------------------------------
+  // WEBRTC HANG UP
+  // --------------------------------------------------
+
+  void sendWebRtcHangup({required String matchId}) {
+    if (!isConnected) return;
+
+    _socket!.emit('webrtc_hangup', {'matchId': matchId});
+
+    debugPrint('[WebRTC] Hang-up sent.');
+  }
+
+  void onWebRtcHangup(void Function(dynamic data) callback) {
+    if (_socket == null) {
+      debugPrint('[WebRTC] Cannot listen: socket is not initialized.');
+      return;
+    }
+
+    _socket!.on('webrtc_hangup', callback);
+  }
+
+  void offWebRtcHangup() {
+    _socket?.off('webrtc_hangup');
+  }
+
+  // --------------------------------------------------
   // WEBRTC SIGNALING ERRORS
   // --------------------------------------------------
 

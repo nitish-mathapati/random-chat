@@ -3,7 +3,8 @@ import type { Request, Response } from 'express';
 import {
   joinMatchmakingQueue,
   cancelMatchmakingQueue,
-  getMatchmakingStatus
+  getMatchmakingStatus,
+  isChatMode,
 } from '../services/matchmaking.service.js';
 
 export const joinMatchmaking = async (
@@ -14,7 +15,17 @@ export const joinMatchmaking = async (
     // Guest ID comes from the authentication middleware.
     const guestId = response.locals.guestId as string;
 
-    const result = await joinMatchmakingQueue(guestId);
+    const chatMode = request.body?.chatMode ?? 'text';
+
+    if (!isChatMode(chatMode)) {
+      response.status(400).json({
+        status: 'error',
+        message: 'chatMode must be "text" or "video".',
+      });
+      return;
+    }
+
+    const result = await joinMatchmakingQueue(guestId, chatMode);
 
     response.status(200).json({
       status: 'success',

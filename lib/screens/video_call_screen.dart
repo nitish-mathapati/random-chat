@@ -149,6 +149,29 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         _handleSignalError(Map<String, dynamic>.from(data));
       }
     });
+
+    _socketService.onWebRtcHangup((data) {
+      if (data is Map) {
+        _handleRemoteHangup(Map<String, dynamic>.from(data));
+      }
+    });
+  }
+
+  Future<void> _handleRemoteHangup(Map<String, dynamic> data) async {
+    if (data['matchId'] != widget.matchId ||
+        data['fromGuestId'] != widget.partnerGuestId) {
+      return;
+    }
+
+    await _cleanup();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('The other person ended the call.')),
+    );
+
+    Navigator.of(context).pop();
   }
 
   Future<void> _initializePeerConnection() async {
@@ -381,6 +404,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socketService.offWebRtcAnswer();
     _socketService.offWebRtcIceCandidate();
     _socketService.offWebRtcSignalError();
+    _socketService.offWebRtcHangup();
 
     try {
       _peerConnection?.onIceCandidate = null;
@@ -406,6 +430,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Future<void> _endCall() async {
+    if (_hasCallInformation && !_isCleaningUp) {
+      _socketService.sendWebRtcHangup(matchId: widget.matchId!);
+    }
+
     await _cleanup();
 
     if (mounted) {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/action_button.dart';
 import 'chat_mode_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   final String guestId;
@@ -53,8 +54,14 @@ class HomeScreen extends StatelessWidget {
                 icon: Icons.videocam_outlined,
                 isPrimary: false,
                 onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Video chat is coming soon!')),
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfileScreen(
+                        chatMode: 'Video Chat',
+                        guestId: guestId,
+                      ),
+                    ),
                   );
                 },
               ),

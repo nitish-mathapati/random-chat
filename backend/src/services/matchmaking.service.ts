@@ -21,8 +21,14 @@ export type MatchmakingResult =
       message: string;
     };
 
+export type ChatMode = 'text' | 'video';
+
+export const isChatMode = (value: unknown): value is ChatMode =>
+  value === 'text' || value === 'video';
+
 export const joinMatchmakingQueue = async (
-  guestId: string
+  guestId: string,
+  chatMode: ChatMode
 ): Promise<MatchmakingResult> => {
   const client = await pool.connect();
 
@@ -94,7 +100,7 @@ export const joinMatchmakingQueue = async (
 
     // Check whether this guest is already waiting.
     const existingQueueResult = await client.query(
-      `SELECT id
+      `SELECT id, chat_mode
        FROM matchmaking_queue
        WHERE guest_id = $1
          AND status = 'waiting'
@@ -103,38 +109,52 @@ export const joinMatchmakingQueue = async (
     );
 
     if (existingQueueResult.rows.length > 0) {
-      await client.query('COMMIT');
+      const existing = existingQueueResult.rows[0];
 
-      return {
-        status: 'waiting',
-        queueId: existingQueueResult.rows[0].id,
-        message: 'You are already waiting for a match.',
-      };
+      if (existing.chat_mode === chatMode) {
+        await client.query('COMMIT');
+
+        return {
+          status: 'waiting',
+          queueId: existing.id,
+          message: 'You are already waiting for a match.',
+        };
+      }
+
+      // The guest switched modes; drop the old entry and search again.
+      await client.query(
+        `UPDATE matchmaking_queue
+         SET status = 'cancelled',
+             cancelled_at = NOW()
+         WHERE id = $1`,
+        [existing.id]
+      );
     }
 
-    // Find the oldest valid guest waiting for a match.
+    // Find the oldest valid guest waiting in the same chat mode.
     const waitingGuestResult = await client.query(
       `SELECT queue.id AS queue_id, queue.guest_id
        FROM matchmaking_queue AS queue
        INNER JOIN guest_sessions AS guest
          ON guest.guest_id = queue.guest_id
        WHERE queue.status = 'waiting'
+         AND queue.chat_mode = $2
          AND queue.guest_id <> $1
          AND guest.expires_at > NOW()
          AND guest.revoked_at IS NULL
        ORDER BY queue.queued_at ASC
        LIMIT 1
        FOR UPDATE OF queue`,
-      [guestId]
+      [guestId, chatMode]
     );
 
     // Nobody is waiting. Add this guest to the queue.
     if (waitingGuestResult.rows.length === 0) {
       const queueResult = await client.query(
-        `INSERT INTO matchmaking_queue (guest_id)
-         VALUES ($1)
+        `INSERT INTO matchmaking_queue (guest_id, chat_mode)
+         VALUES ($1, $2)
          RETURNING id`,
-        [guestId]
+        [guestId, chatMode]
       );
 
       await client.query('COMMIT');
@@ -152,11 +172,12 @@ export const joinMatchmakingQueue = async (
     const matchResult = await client.query(
       `INSERT INTO matchmaking_matches (
          guest_one_id,
-         guest_two_id
+         guest_two_id,
+         chat_mode
        )
-       VALUES ($1, $2)
+       VALUES ($1, $2, $3)
        RETURNING id`,
-      [waitingGuest.guest_id, guestId]
+      [waitingGuest.guest_id, guestId, chatMode]
     );
 
     const matchId = matchResult.rows[0].id;
