@@ -5,13 +5,13 @@ import express, {
 } from 'express';
 
 import healthRoutes from './routes/health.routes.js';
-import userRoutes from './routes/user.routes.js';
 import guestRoutes from './routes/guest.routes.js';
 import matchmakingRoutes from './routes/matchmaking.routes.js';
+import { createRateLimiter } from './middleware/rate-limit.middleware.js';
 
 const app: Express = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
 
 app.get('/', (request: Request, response: Response) => {
   response.status(200).json({
@@ -21,9 +21,9 @@ app.get('/', (request: Request, response: Response) => {
 });
 
 app.use('/health', healthRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/guest', guestRoutes);
-app.use('/api/matchmaking', matchmakingRoutes);
+// /api/users is not mounted: it has no authentication and the app does not use it.
+app.use('/api/guest', createRateLimiter(20, 15 * 60 * 1000), guestRoutes);
+app.use('/api/matchmaking', createRateLimiter(60, 60 * 1000), matchmakingRoutes);
 
 app.use((request: Request, response: Response) => {
   response.status(404).json({

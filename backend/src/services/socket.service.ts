@@ -132,6 +132,36 @@ let io: GuestSocketServer | null = null;
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Only these error codes are safe to show to clients; anything else may leak database details.
+const CLIENT_SAFE_ERRORS = new Set([
+  'MESSAGE_EMPTY',
+  'MESSAGE_TOO_LONG',
+  'MATCH_NOT_ACTIVE_OR_UNAUTHORIZED',
+]);
+
+function toClientError(error: unknown, fallback: string): string {
+  return error instanceof Error && CLIENT_SAFE_ERRORS.has(error.message)
+    ? error.message
+    : fallback;
+}
+
+function createSocketRateLimiter(maxEvents: number, windowMs: number) {
+  let count = 0;
+  let windowStart = Date.now();
+
+  return (): boolean => {
+    const now = Date.now();
+
+    if (now - windowStart >= windowMs) {
+      windowStart = now;
+      count = 0;
+    }
+
+    count += 1;
+    return count > maxEvents;
+  };
+}
+
 function isValidMatchId(matchId: unknown): matchId is string {
   return (
     typeof matchId === 'string' &&
@@ -235,6 +265,8 @@ export const initializeSocketServer = (
     Record<string, never>,
     GuestSocketData
   >(httpServer, {
+    // Large enough for SDP (max 100 KB) but blocks oversized payloads.
+    maxHttpBufferSize: 256 * 1024,
     cors: {
       origin: '*',
       methods: ['GET', 'POST'],
@@ -290,6 +322,24 @@ export const initializeSocketServer = (
 
     console.log(`[Socket] Guest connected: ${guestId}`);
 
+    const isChatLimited = createSocketRateLimiter(20, 10_000);
+    const isSignalLimited = createSocketRateLimiter(200, 10_000);
+
+    socket.use(([event], next) => {
+      const limited = event.startsWith('webrtc_')
+        ? isSignalLimited()
+        : isChatLimited();
+
+      if (limited) {
+        socket.emit('message_error', {
+          message: 'RATE_LIMITED',
+        });
+        return;
+      }
+
+      next();
+    });
+
     // --------------------------------------------------
     // TEXT CHAT: SEND MESSAGE
     // --------------------------------------------------
@@ -298,7 +348,7 @@ export const initializeSocketServer = (
       try {
         if (
           !payload ||
-          typeof payload.matchId !== 'string' ||
+          !isValidMatchId(payload.matchId) ||
           typeof payload.message !== 'string'
         ) {
           socket.emit('message_error', {
@@ -335,13 +385,8 @@ export const initializeSocketServer = (
       } catch (error) {
         console.error('[Chat] Message sending failed:', error);
 
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : 'MESSAGE_SEND_FAILED';
-
         socket.emit('message_error', {
-          message: errorMessage,
+          message: toClientError(error, 'MESSAGE_SEND_FAILED'),
         });
       }
     });
@@ -354,7 +399,7 @@ export const initializeSocketServer = (
       try {
         if (
           !payload ||
-          typeof payload.matchId !== 'string'
+          !isValidMatchId(payload.matchId)
         ) {
           socket.emit('message_error', {
             message: 'Invalid chat history request.',
@@ -363,8 +408,8 @@ export const initializeSocketServer = (
         }
 
         const requestedLimit =
-          typeof payload.limit === 'number'
-            ? payload.limit
+          Number.isInteger(payload.limit)
+            ? (payload.limit as number)
             : 50;
 
         const messages = await getChatHistory(
@@ -384,13 +429,8 @@ export const initializeSocketServer = (
       } catch (error) {
         console.error('[Chat] History retrieval failed:', error);
 
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : 'CHAT_HISTORY_FAILED';
-
         socket.emit('message_error', {
-          message: errorMessage,
+          message: toClientError(error, 'CHAT_HISTORY_FAILED'),
         });
       }
     });
@@ -403,7 +443,7 @@ export const initializeSocketServer = (
       try {
         if (
           !payload ||
-          typeof payload.matchId !== 'string'
+          !isValidMatchId(payload.matchId)
         ) {
           socket.emit('message_error', {
             message: 'Invalid end match request.',
